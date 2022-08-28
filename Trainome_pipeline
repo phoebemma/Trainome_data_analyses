@@ -1,0 +1,189 @@
+#!/usr/bin/bash
+
+usage()
+{
+echo "DESCRIPTION:"
+
+echo "The Trainome_pipeline is designed to ease RNA-Seq analyses by combining different analyses tools and options . It is intended to make  RNA sequence analyses easier both for those with robust bioinformatics skills and those relatively new to bioinformatics"
+echo ""
+echo "Usage:"
+
+echo " -i 	the path to the input directory where RNA sequence data are stored in fastq.gz format"
+
+echo " -o  	the path to the directory where results outputs should be saved"
+
+echo " -t  	the number of threads to be used in the analyses"
+
+echo " -r 	(optional) requests trimming using Trimmomatics"
+
+echo " -s	(optional) requests mapping using STAR: This is set to generate Bam files, gene as well as transcript counts"
+
+echo " -k 	(optional) requests transcript counts generated using Kallisto"
+
+echo " -a 	(optional) performs alternative splicing using spladder"
+
+echo " -e 	(optional) analyses the splicing efficiency using SPLICE-q"
+
+ exit 2
+
+} 
+
+#check no input
+if [[ ! $@ =~ ^\-.+ ]]
+then
+  echo "Invalid input"
+  usage
+fi
+
+ while getopts :i:o:t:rskae?h options
+do
+
+case "$options" in 
+i) input_dir=${OPTARG};;
+o) output_dir=${OPTARG};;
+t) threads=${OPTARG};;
+r) trimming=trimming;;
+s) star_mapping=star_mapping;;
+k) kallisto=kallisto;;
+a) alt_splicing=alt_splicing;; 
+e) splicing_efficiency=splicing_efficiency;;
+h|?) usage;;
+*) echo "Unexpected option check your inputs"
+	usage;;
+esac
+done
+
+
+
+#check if the input and output directories exist
+if [ ! -d $input_dir ];
+	then
+	echo "Your input directory does not exist or is not accessible"
+	usage
+	exit 2
+fi
+
+if [ ! -d $output_dir ];
+	then
+	echo "Your output directory does not exist or is not accessible"
+	usage
+	exit 2
+fi
+
+
+echo "======================================================================"
+echo "First, a qualiy check of your sequences will be done using fastqc"
+mkdir -p $output_dir/fastq_results
+for file in $input_dir/*fastq.gz
+do
+fastqc $file -o $output_dir/fastq_results -t $threads
+done 
+
+echo "fastqc results saved in $output_dir/fastq_results"
+#=================================================================================
+
+#Trim sequences using Trimmomatic if user requested for it.
+
+if [ -n "$trimming" ]; then
+mkdir -p $output_dir/trimmed_sequences
+echo "================================================================"
+echo "Trimming your sequences using Trimmomatic"
+trim_path=/datastore/Chidimma/tools/Trimmomatic-0.39
+for f in $input_dir/*R1_001.fastq.gz
+do
+java -jar $trim_path/trimmomatic-0.39.jar PE -threads $threads -basein $f -baseout $output_dir/trimmed_sequences/${f##*/} ILLUMINACLIP:$trim_path/adapters/TruSeq3-PE-2.fa:2:30:15:8:true MAXINFO:40:0.7 MINLEN:10 LEADING:3 TRAILING:3
+done
+
+echo "your trimmed sequences are in $output_dir/trimmed_sequences"
+#============================================================================
+#It is necessary to check the quality of trimmed sequences after trimming
+echo "checking the quality of your trimmed sequences using Fastqc"
+mkdir -p $output_dir/post_trimming_fastqc
+for file in $output_dir/trimmed_sequences/*fastq.gz
+do
+fastqc $file -o $output_dir/post_trimming_fastqc -t $threads
+done
+ else
+continue
+
+fi
+#==========================================================================
+
+#Star mapping if selected by user
+#FOR USE OUTSIDE THE BIOINF SERVER, THIS WOULD INVOLVE REQUESTING FOR GENOME INDEX OR CREATING ONE
+if [ -n "star_mapping" ]; then
+mkdir -p $output_dir/Star_outputs
+echo "Using STAR to mapp and align your sequences"
+genome_dir=/datastore/Chidimma/Trainome_data/Genome_index/STAR 
+annotated_dir=/datastore/Chidimma/Trainome_data/Genome_index/gencode.v40.primary_assembly.annotation.gtf 
+#The input directory changes to the directory wih trimmed sequences if user requested for trimming
+for file in $output_dir/trimmed_sequences/*1P.fastq.gz
+do
+file2=${file/_1P/_2P}
+STAR --outSAMattributes All --outSAMtype BAM SortedByCoordinate --quantMode TranscriptomeSAM GeneCounts  --runDirPerm All_RWX --runThreadN $threads --sjdbGTFfile $annotated_dir --readFilesCommand zcat --winAnchorMultimapNmax 150 --outFilterMultimapNmax 80 --outReadsUnmapped Fastx --outMultimapperOrder Random --outWigType wiggle --outFilterMismatchNoverLmax 0.1 --genomeDir $genome_dir --readFilesIn $file $file2 --outFileNamePrefix $output_dir/Star_outputs/${file##*/};
+done 
+#ADD "--twopassMode Basic" if requested
+echo "The outputs from STAR are saved in $output_dir/Star_outputs"
+
+#It is necessary to index the bam files to get them ready for downstream analyse
+echo " indexing the bamfiles with Samtools"
+for bam_file in $output_dir/Star_outputs/*sortedByCoord.out.bam
+do
+samtools index $bam_file
+done
+
+fi
+
+#=============================================================================
+
+if [ -n "kallisto" ]; then
+echo "Generating transcript counts using kallisto"
+dir=$output_dir/trimmed_sequences/*1P.fastq.gz
+kallisto_index=/datastore/Chidimma/Trainome_data/Genome_index/GRCh38_kallisto_index
+for file in $dir
+do
+file2=${file/_1P/_2P}
+#Create a folder in the output directory with which to identify the input files
+#Each file will have its individual folder for the outputs
+
+mkdir -p $output_dir/Kallisto_outputs/1A${file##*/}_dir
+#get the newly created folder path and assign it to "Results"
+Results=$(readlink -e $output_dir/Kallisto_outputs/1A${file##*/}_dir)
+
+#Run kallisto quantification
+kallisto quant -i $kallisto_index -o $Results $file $file2 -t 16 --plaintext
+
+cd $Results
+mv abundance.tsv ${file##*/}.tsv
+done
+echo "The transcript count of your sequences can be found in $output_dir/Kallisto_outputs"
+fi
+
+#====================================================================================
+if [ -n "alt_splicing" ]; then
+mkdir -p $output_dir/Spladder_outputs
+directory=$output_dir/Star_outputs
+input=$directory/*sortedByCoord.out.bam
+annotated_dir=/datastore/Chidimma/Trainome_data/Genome_index/gencode.v40.primary_assembly.annotation.gtf 
+output=$output_dir/Spladder_outputs
+cd $directory
+#copy all the *sortedByCoord.out.bam files into a txt file
+ls -1 $input > bamfiles.txt
+#EACH COMMENTED ONE IS A STEP RUN BEFORE THE ONE THAT FOLLOWS IT
+
+spladder build -o $output -a $annotated_dir -b bamfiles.txt --merge-strat single --no-extract-ase --sparse-bam --parallel 24 --confidence 2 --output-txt
+
+
+spladder build -o $output -a $annotated_dir -b bamfiles.txt --merge-strat merge_graphs --no-extract-ase --sparse-bam --parallel 24 --confidence 2 --output-txt --quantify-graph
+
+for file in $input
+do
+spladder build -o $output -b $file -a $annotated_dir --merge-strat merge_graphs --no-extract-ase --quantify-graph --qmode single --confidence 2 --parallel 24
+done 
+
+spladder build -o $output -a $annotated_dir -b bamfiles.txt --merge-strat merge_graphs --no-extract-ase --sparse-bam --parallel 24 --confidence 2 --output-txt --quantify-graph --qmode collect
+
+spladder build -o $output -a $annotated_dir -b bamfiles.txt --merge-strat merge_graphs --ase-edge-limit 1500 --sparse-bam --parallel 24 --confidence 2 --output-txt --no-compress-text
+
+#TRYING TO FIGURE OUT HOW TO DO SPLADDER TEST ANALYSES
+fi
