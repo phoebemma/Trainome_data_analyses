@@ -41,18 +41,21 @@ threads = args.threads
 STAR_mapping = args.STAR_mapping
 trimmomatic = args.trimmomatic_trim
 trim_path = "/datastore/Chidimma/tools/Trimmomatic-0.39"
-fastqc = "fastqc $file -o$output -t $threads"
-if args.trimmomatic_trim:
-    fastq= os.path.join(output_dir, "fastqc_results")
+#fastq=subprocess.check_call(["mkdir {}/fastqc_results".format(output_dir)], shell =True)
+#fastq = os.path.join(output_dir, "fastqc_results")
+#if not fastq:
+    #os.makedirs(fastq)
+#if args.trimmomatic_trim:
+    #fastq= os.path.join(output_dir, "fastqc_results")
   ##     os.mkdir(fastq)
     #for file in os.listdir(input_dir):
      #   if fnmatch.fnmatch(file, "*.fastq.gz"):
       #      subprocess.call(["sh", "./trim.sh"])
 #else:
- #   pass
-#if args.STAR_mapping
-#os.environ['threads']=threads
-#os.environ['output']=output
+#fastq = os.path.join(output_dir, "fastqc_results")
+#if not os.path.exists(fastq):
+#    os.makedirs(fastq)
+
 #Grab all fastq files in the input directory
 Fasta_files = []
 #for file in fnmatch.filter(os.listdir(input_dir), "*.fastq.gz"):
@@ -60,15 +63,24 @@ directory = fnmatch.filter(os.listdir(input_dir), "*.fastq.gz")
 for file in directory:
     Fasta_files.append(os.path.join(input_dir, file))
 #env = {"file": "file", "threads" : "threads", "fastq" : "fastq"}
+
 def fastqc(file):
-    command= "fastqc {} -o {} -t {}".format(file, output_dir, threads)
+    #make a folder for the results if none exists
+    fastq = os.path.join(output_dir, "fastqc_results")
+    if not os.path.exists(fastq):
+        os.makedirs(fastq)
+    #fastq= os.makedirs("fastq_results")
+    command= "fastqc {} -o {} -t {}".format(file,fastq, threads)
+    #command= "fastqc {} -o {} -t {}".format(file,fastq, threads)
     df = subprocess.check_call(command, shell=True)
     return(df)
 
+
+
 if trimmomatic:
-    fastq = os.path.join(output_dir, "fastqc_results")
-    if not fastq:
-        os.mkdir(fastq)    
+    #fastq = os.path.join(output_dir, "fastqc_results")
+    #if not fastq:
+        #os.mkdir(fastq)    
 
     for file in  Fasta_files:
         fastqc(file)
