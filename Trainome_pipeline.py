@@ -226,41 +226,48 @@ for file in Fasta_files:
 
 if PE_trimmomatic:
     for file in Fasta_files:
-        PE_trim_trimmomatic(file)
+        #Choose only the forward sequences, this is because the trimmomatic command is using the "-basein" option that automatically determines the reverse file
+        if fnmatch.fnmatch(file, "*R1_001.fastq.gz"):
+            PE_trim_trimmomatic(file)
+            
+            #creating a list of the trimmed sequences using trimmomatic in PE mode
+
+            trimmed_files_PE= []
+            trimmed_1P = []
+            trimmed_2P =[]
+            for trimmed in trim:
+                if fnmatch.fnmatch(trimmed, "*.fastq.gz"):
+                    trimmed_files_PE.append(trimmed)
+           
+            # creating lists for both forward and reverse sequences
+            for trimmed in glob.glob(os.path.join(trim, "*_1P.fastq.gz")):
+               trimmed_match = trimmed.replace("_1P", "_2P")
+               if not os.path.exists(trimmed_match):
+                    print("match not found for %s..." % trimmed)
+                    continue
+               trimmed_1P.append(trimmed)
+               trimmed_2P.append(trimmed_match)
 
 elif SE_trimmomatic:
     for file in Fasta_files:
         SE_trim_trimmomatic(file)
-        
-        continue
-    
-#creating a list of the trimmed sequences using trimmomatic in PE mode
-trimmed_files_PE= []
-trimmed_1P = []
-trimmed_2P =[]
-for trimmed in trim:
-    trimmed_files_PE.append(trimmed)
-for trimmed in glob.glob(os.path.join(trim, "*_1P.fastq.gz")):
-   trimmed_match = trimmed.replace("_1P", "_2P")
-   if not os.path.exists(trimmed_match):
-        print("match not found for %s..." % trimmed)
-        continue
-   trimmed_1P.append(trimmed)
-   trimmed_2P.append(trimmed_match)
-
-#creating a list of the trimmed sequences using trimmomatic in the SE mode
-trimmed_files_SE=[]
-for trimmed in trim_SE:
-    trimmed_files_SE.append(trimmed)
-#rUNNING A QUALITY CHECK OF THE TRIMOMATIC OUTPUTS  
+        #creating a list of the trimmed sequences using trimmomatic in the SE mode
+        trimmed_files_SE=[]
+        for trimmed in trim_SE:
+            trimmed_files_SE.append(trimmed)
+            continue
+        #rUNNING A QUALITY CHECK OF THE TRIMOMATIC OUTPUTS  
 if PE_trimmomatic:
     for file in trimmed_files_PE:
-        fastqc_after_trimmomatic()
-  
+        fastqc_after_trimmomatic(file)
+          
 elif SE_trimmomatic:
     for file in trimmed_files_SE:
-        fastqc_after_trimmomatic()
+        fastqc_after_trimmomatic(file)
         continue
+        
+    
+    
 
 # checks if the user requested for trimming and STAR mapping
 #if user requests for both, the input sequences for the mapping
