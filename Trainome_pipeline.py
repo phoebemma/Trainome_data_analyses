@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Aug 26 10:19:04 2022
+Created on Tue Sep 13 08:21:48 2022
 
 @author: chidimma
 """
-
-import argparse
+#import configparser
+import argparse, configparser
 from argparse import ArgumentParser
 import os
 import subprocess
@@ -15,106 +15,115 @@ import fnmatch
 import sys
 import glob
 
+DEFAULT="trimmomatic.ini"
 
-#The following lines define the command line arguements. Two arguments 
-#(input directory and output directory)will be required 
-#while the rest will be optional. The user defines which analyses to run 
-#and what tools to use. 
-parser = argparse.ArgumentParser(prog="Trainome_Pipeline", 
-description = "The Trainome_pipeline is designed to ease RNA-Seq analyses by combining different analyses tools and options .\
-It is intended to make  RNA sequence analyses easier both for those with \
-robust bioinformatics skills and those relatively new to bioinformatics")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog="Trainome_Pipeline", 
+    description = "The Trainome_pipeline is designed to ease RNA-Seq analyses by combining different analyses tools and options .\
+    It is intended to make  RNA sequence analyses easier both for those with \
+    robust bioinformatics skills and those relatively new to bioinformatics")
+   
+
+# Defining the required arguments
 Required=parser.add_argument_group("Required", "These inputs are required. That is, not optional")
-Required.add_argument("-i", "--input_dir", required=True, dest="input_dir", \
+Required.add_argument("-i", "--input_dir", required=True,  metavar = ".",dest="input_dir",\
 help="the path to the input directory where RNA sequence data are stored in fastq.gz format")
 
-Required.add_argument ("-o", "--output_dir", dest= "output_dir", required=True, \
-help ="the path to the directory where results outputs should be saved")
+Required.add_argument ("-o", "--output_dir", dest= "output_dir",  metavar = ".", required=True,
+help ="the path to the directory where results outputs should be saved") 
+    
+#Number of threads. Defaults to 1
+parser.add_argument("-t", "--threads", dest="threads",type = int, metavar = "",  default = 1,
+help="the number of threads to be used in executing the analyses. This defaults to 1 if none is supplied")
 
-parser.add_argument("-t", "--threads", dest="threads",type = int, default = 1,
-help="the number of threads to be used in executing the analyses. This defaults to\
-   1 if none is supplied")
-parser.add_argument("-g", "--trim_galore", dest="trim_galore_trim", 
-help="requests trimming using TrimGalore")
+#Define the mode of experiment
+parser.add_argument("mode", choices= ["PE", "SE"], 
+ help = "requests for paired-end (PE) or single_end (SE) sequence analyses", )
 
-#Create a mutually exclusive option for STAR-mapping
-STAR = parser.add_mutually_exclusive_group()
-STAR.add_argument("-p", "--PE_STAR_mapping", dest="PE_STAR_mapping", nargs=2,
-help="requests paired_end mapping using STAR: This is set to generate Bam files,\
-gene as well as transcript counts. Add two paths; that to your STAR genome \
-index, and the other to your primary assembly annotation in gtf format (IN THAT ORDER)")
-STAR.add_argument("-q", "--SE_STAR_mapping", dest="SE_STAR_mapping", nargs=2,
-help="requests single end mapping using STAR: This is set to generate Bam files,\
-gene as well as transcript counts. Add two paths; that to your STAR genome \
-index, and the other to your primary assembly annotation in gtf format (IN THAT ORDER)")
+#add  mutually exclusive arguments of for trimming with trimmomatic
+trimmomatic_trim = parser.add_mutually_exclusive_group()
+trimmomatic_trim.add_argument("-r", "--trimmomatic_trim", nargs =2, dest = "trimmomatic", 
+help = "requests trimming using Trimmomatic. Requires two paths. The first to the  \
+ trimmomatic jar, the others to the adapters.", metavar = "")
 
-parser.add_argument("-a", "--alternative_splicing", dest="alternative_splicing",
-nargs=2, help="requests alternative splicing analyses using Spladder. This \
-analyses the presence of the following alternative splicing events in input \
-data; exon skips, intron retention, alternative 3’ splice sites, alternative \
-5’ splice sites,multiple (coordinated) exons skips, mutually exclusive exons ")
+trimmomatic_trim.add_argument("--trim_commands", dest = "trim_commands", nargs = "?", type = argparse.FileType("r"))
 
-parser.add_argument("-k", "--kallisto", dest="kallisto_mapping",nargs=2, 
-help="requests mapping using kallisto. This generates transcripts counts")
+#add  mutually exclusive arguments for STAR_mapping
+Star_mapping = parser.add_mutually_exclusive_group()
+Star_mapping.add_argument("-s", "--STAR_mapping", dest = "STAR_mapping", metavar = "", nargs=2, 
+help = "requests sequence mapping using STAR. The defaults setting will generate\
+bam files and counts of reads per gene. Two paths are needed, first path to user's STAR \
+genome index, the second to the primary assembly annotation in gtf format" )
 
-parser.add_argument("-e", "--splicing_efficiency", dest="splicing_efficiency", 
-help="requests analyses of splicing efficiency using SPLICE-q. This ranks intron \
-retention from 0-1. 1 being completely spliced intron and 0 complete intron retention")
+Star_mapping.add_argument("--STAR_commands",dest = "STAR_commands", nargs = "?", type = argparse.FileType("r"))
 
-parser.add_argument("-v", "--version", action="version", version="%(prog)s 0.01", 
-help="prints out the pipeline version")
+parser.add_argument("-k", "--kallisto", dest="kallisto_quant", metavar = "", nargs=1, 
+help="requests mapping using kallisto. This generates transcripts counts. \
+The path to a kallisto index is needed")
 
-#Create a mutually exculsive option for trimmomatic. Users can either perform
-# paired_end trimming, or single end trimming
-trimmomatic = parser.add_mutually_exclusive_group()
-trimmomatic.add_argument("-r", "--PE_trimmomatic", dest="PE_trimmomatic", 
-nargs=2, help = "requests trimming using Trimmomatic (Paired-end mode). Requires two \
-directory paths, One to the trimmomatic jar, the other to the adapters.IN THAT ORDER\
-This argument is mutually exclusive with the SE mode (-s)")
-trimmomatic.add_argument("-s", "--SE_trimmomatic", dest="SE_trimmomatic", 
-nargs=2, help = "requests trimming using Trimmomatic (single_end mode). Requires two \
-directory paths, One to the trimmomatic jar, the other to the adapters \
-(IN THAT ORDER). This argument is mutually exclusive with the PE mode (-p)")
 args = parser.parse_args()
+if args.trim_commands:
+    #config = configparser.ConfigParser()
+    #config.read(DEFAULT)
+    #defaults = {}
+    #defaults.update(dict(config.items("USER_PREFERENCES")))
+    #parser.set_defaults(**defaults)
+    #args = parser.parse_args()
+    with open(args.trim_commands, "r") as f:
+        config = configparser.ConfigParser()
+        config.read([args.trim_file])
+    
+    
 
-#to check if input directory exists
-if not os.path.exists(args.input_dir):
- sys.exit(Fore.BLUE + "The input directory you specified does not exist or is inaccesible")
-
-#check output directory
-if not os.path.exists(args.output_dir):
- sys.exit(Fore.BLUE + "The output directory you specified does not exist or is inaccesible")
-
+#Parameters to override the args arguments
 output_dir = args.output_dir
 input_dir = args.input_dir
 threads = args.threads
-PE_STAR_mapping = args.PE_STAR_mapping
-SE_STAR_mapping = args.SE_STAR_mapping
-PE_trimmomatic=args.PE_trimmomatic
-SE_trimmomatic=args.SE_trimmomatic
-trim_galore= args.trim_galore_trim
-alt_splicing = args.alternative_splicing
-kallisto_quant = args.kallisto_mapping
-splicing_efficiency = args.splicing_efficiency
+
+
+if args.mode == "PE":
+    PE_trimmomatic=args.trimmomatic
+    trim_commands = args.trim_commands
+    PE_STAR_mapping = args.STAR_mapping
+    STAR_commands = args.STAR_commands
+    PE_kallisto_quant = args.kallisto_quant
+   
+else:
+    if args.mode == "SE":
+        SE_trimmomatic = args.trimmomatic
+        trim_commands = args.trim_commands
+        SE_STAR_mapping = args.STAR_mapping
+        STAR_commands = args.STAR_commands
+        SE_kallisto_quant = args.kallisto_quant
+        
+
+#Check if input and output directories exist
+if not os.path.exists(input_dir):
+ sys.exit(Fore.BLUE + "The input directory you specified does not exist or is inaccesible")
+
+#check output directory
+if not os.path.exists(output_dir):
+ sys.exit(Fore.BLUE + "The output directory you specified does not exist or is inaccesible")
+
 
 #Grab all fastq files in the input directory
 Fasta_files = []
 directory = fnmatch.filter(os.listdir(input_dir), "*.fastq.gz")
 for file in directory:
     Fasta_files.append(os.path.join(input_dir, file))
-
-
-#Grab all forward sequences
+    
+    
+#Create list for all forward sequences
 Forward_fasta_files = []
 
-#Grab all reverse sequences
+#Create list for all reverse sequences
 Reverse_fasta_files = []
 #for file in Fasta_files:
    # if fnmatch.fnmatch(file, "*R1_001.fastq.gz"):
-       # Forward_fasta_files.append(file)
-    #elif:
-        #if fnmatch.fnmatch(file, "*R2_001.fastq.gz"):
-            #Reverse_fasta_files.append(file)
+  #      Forward_fasta_files.append(file)
+ #   else:
+  #      if fnmatch.fnmatch(file, "*R2_001.fastq.gz"):
+      #      Reverse_fasta_files.append(file)
 for filename in glob.glob(os.path.join(input_dir, "*_R1_*.fastq.gz")):
     filename_match = filename.replace("_R1_", "_R2_")
     
@@ -123,10 +132,10 @@ for filename in glob.glob(os.path.join(input_dir, "*_R1_*.fastq.gz")):
         continue
     Forward_fasta_files.append(filename)
     Reverse_fasta_files.append(filename_match)
-    
-    
-    
-    
+print(Forward_fasta_files)
+print(Reverse_fasta_files)
+#Define a function that runs quality check on all input files 
+
 def fastqc(file):
     """
     This function makes a new folder called "fastqc results" (if none exists)
@@ -141,42 +150,8 @@ def fastqc(file):
     return(df)
     print("Quality check completed, check results in %s!" %fastq)
     
-
-def PE_trim_trimmomatic(file):
-    """
-    This function creates a new folder called "trimmed with trimmomatic 
-    sequences" in the output directory and trims the sequences using trimmomatic 
-    in paired_end mode
-    """
-    global trim
-    trim= os.path.join(output_dir, "trimmed_with_trimmomatic_sequences")
-    if not os.path.exists(trim):
-        os.makedirs(trim)
-    file_basename=os.path.basename(file)
-    trimmomatic_jar = PE_trimmomatic[0]
-    adapter_seqs = PE_trimmomatic[1]
-    command ="java -jar {} PE -threads {} -basein {} -baseout {}/{} ILLUMINACLIP:{}:2:30:15:8:true MAXINFO:40:0.7 MINLEN:10 LEADING:3 TRAILING:3".format(trimmomatic_jar, threads, file,  trim, file_basename, adapter_seqs)
-    df = subprocess.check_call(command, shell = True)
-    return df
-
-def SE_trim_trimmomatic(file):
-    """
-    This function creates a new folder called "trimmed with trimmomatic 
-    sequences" in the output directory and trims the sequences using trimmomatic 
-    in single_end mode
-    """
-    global trim_SE
-    trim_SE= os.path.join(output_dir, "trimmed_with_trimmomatic_sequences")
-    if not os.path.exists(trim_SE):
-        os.makedirs(trim_SE)
-    file_basename=os.path.basename(file)
-    trimmomatic_jar = SE_trimmomatic[0]
-    adapter_seqs = SE_trimmomatic[1]
-    command ="java -jar {} SE -threads {} {} {}/{} ILLUMINACLIP:{}:2:30:15:8:true MAXINFO:40:0.7 MINLEN:10 LEADING:3 TRAILING:3".format(trimmomatic_jar, threads, file,  trim_SE, file_basename, adapter_seqs)
-    df = subprocess.check_call(command, shell = True)
-    return df
-
-
+   
+    
 def fastqc_after_trimmomatic(file):
     """
     This function runs a quality check on trimmed sequences after trimming
@@ -187,38 +162,73 @@ def fastqc_after_trimmomatic(file):
     command= "fastqc {} -o {} -t {}".format(file,fastqc_trimmed, threads)
     df = subprocess.check_call(command, shell=True)
     return(df)
-
     
 
-def PE_mapping_STAR(file1, file2):
-    global PE_STAR
-    PE_STAR = os.path.join(output_dir, "PE_STAR_output")
-    if not os.path.exists(PE_STAR):
-        os.makedirs(PE_STAR)
-    genome_directory= args.PE_STAR_mapping[0]
-    annotation = args.PE_STAR_mapping[1]
-    file_basename = os.path.basename(file1)
-    command = "STAR --outSAMattributes All --outSAMtype BAM SortedByCoordinate --quantMode TranscriptomeSAM GeneCounts  --runDirPerm All_RWX --runThreadN {} --sjdbGTFfile {} --readFilesCommand zcat --winAnchorMultimapNmax 150 --outFilterMultimapNmax 80 --outReadsUnmapped Fastx --outMultimapperOrder Random --outSAMstrandField intronMotif --outWigType wiggle --outFilterMismatchNoverLmax 0.1 --genomeDir {} --readFilesIn {} {} --outFileNamePrefix {}/{}".format(threads,annotation, genome_directory, file1, file2, PE_STAR, file_basename)
-    df = subprocess.check_call(command, shell = True)
-    return(df)
 
 
-def SE_mapping_STAR(file):
-    global SE_STAR
-    SE_STAR = os.path.join(output_dir, "SE_STAR_output")
-    if not os.path.exists(SE_STAR):
-        os.makedirs(SE_STAR)
-    genome_directory= args.SE_STAR_mapping[0]
-    annotation = args.SE_STAR_mapping[1]
-    file_basename = os.path.basename(file)
-    command = "STAR --outSAMattributes All --outSAMtype BAM SortedByCoordinate --quantMode TranscriptomeSAM GeneCounts  --runDirPerm All_RWX --runThreadN {} --sjdbGTFfile {} --readFilesCommand zcat --winAnchorMultimapNmax 150 --outFilterMultimapNmax 80 --outReadsUnmapped Fastx --outMultimapperOrder Random --outSAMstrandField intronMotif --outWigType wiggle --outFilterMismatchNoverLmax 0.1 --genomeDir {} --readFilesIn {} --outFileNamePrefix {}/{}".format(threads,annotation, genome_directory, file, SE_STAR, file_basename)
-    df = subprocess.check_call(command, shell = True)
-    return(df)
-
-
-
-print("........................................................................")
-print("Checking the quality of your samples using fastqc")
+#Creating a class object fro paired-end sequence analyses
+class Paired_end:
+    def trimmomatic(file):
+        """
+        This function creates a new folder called "trimmed with trimmomatic 
+        sequences" in the output directory and trims the sequences using trimmomatic 
+        in paired_end mode
+        """
+        global trim
+        trim= os.path.join(output_dir, "PE_trimmed_sequences")
+        if not os.path.exists(trim):
+            os.makedirs(trim)
+        file_basename=os.path.basename(file)
+        trimmomatic_jar = PE_trimmomatic[0]
+        adapter_seqs = PE_trimmomatic[1]
+        command ="java -jar {} PE -threads {} -basein {} -baseout\
+        {}/{} ILLUMINACLIP:{}:2:30:15:8:true MAXINFO:40:0.7 MINLEN:10 \
+            LEADING:3 TRAILING:3".format(trimmomatic_jar, threads, file,  
+            trim, file_basename, adapter_seqs)
+        df = subprocess.check_call(command, shell = True)
+        return df
+    
+    
+    
+    def STAR_mapping(file1, file2):
+        
+        """
+        This function creates a new folder in the user's output directory
+        named PE_STAR_output, then uses STAR to mapp and analyse the RNA-Seq data"""
+        global PE_STAR
+        PE_STAR = os.path.join(output_dir, "STAR_outputs_PE")
+        if not os.path.exists(PE_STAR):
+            os.makedirs(PE_STAR)
+        genome_directory= PE_STAR_mapping[0]
+        annotation = PE_STAR_mapping[1]
+        file_basename = os.path.basename(file1)
+        command = "STAR --outSAMattributes All --outSAMtype BAM SortedByCoordinate \
+        --quantMode TranscriptomeSAM GeneCounts  \
+        --runDirPerm All_RWX --runThreadN {} \
+        --sjdbGTFfile {} --readFilesCommand zcat --winAnchorMultimapNmax 150 \
+        --outFilterMultimapNmax 80 --outReadsUnmapped Fastx \
+        --outMultimapperOrder Random --outSAMstrandField intronMotif \
+        --outWigType wiggle --outFilterMismatchNoverLmax 0.1 --genomeDir {} \
+        --readFilesIn {} {} --outFileNamePrefix {}/{}".format(threads, annotation,\
+        genome_directory, file1, file2, PE_STAR, file_basename)
+        df = subprocess.check_call(command, shell = True)
+        return(df)
+    
+    
+    def kallisto(file1, file2):
+        global kallisto_outputs
+        kallisto_outputs = os.path.join(output_dir, "kallisto_outputs")
+        if not os.path.exists(kallisto_outputs):
+            os.makedirs(kallisto_outputs)
+        file_basename = os.path.basename(file1)
+        indiv_folder = os.path.join(kallisto_outputs, file_basename + "_dir")
+        if not os.path.exists(indiv_folder):
+            os.makedirs(indiv_folder)
+        index =  PE_kallisto_quant
+        command = "kallisto quant -i {} -o {} {} {} -t {} --plaintext".format(index, 
+        indiv_folder, file1, file2, threads)
+        df= subprocess.check_call(command, shell =True)
+        return(df)
 
 for file in Fasta_files:
     fastqc(file)
@@ -228,16 +238,18 @@ if PE_trimmomatic:
     for file in Fasta_files:
         #Choose only the forward sequences, this is because the trimmomatic command is using the "-basein" option that automatically determines the reverse file
         if fnmatch.fnmatch(file, "*R1_001.fastq.gz"):
-            PE_trim_trimmomatic(file)
+            Paired_end.trimmomatic(file)
             
             #creating a list of the trimmed sequences using trimmomatic in PE mode
 
             trimmed_files_PE= []
             trimmed_1P = []
             trimmed_2P =[]
-            for trimmed in trim:
-                if fnmatch.fnmatch(trimmed, "*.fastq.gz"):
-                    trimmed_files_PE.append(trimmed)
+            #for trimmed in trim:
+                #if fnmatch.fnmatch(trimmed, "*.fastq.gz"):
+                    #trimmed_files_PE.append(trimmed)
+            for trimmed in glob.glob(os.path.join(trim, "*.fastq.gz")):
+                trimmed_files_PE.append(trimmed)
            
             # creating lists for both forward and reverse sequences
             for trimmed in glob.glob(os.path.join(trim, "*_1P.fastq.gz")):
@@ -247,50 +259,35 @@ if PE_trimmomatic:
                     continue
                trimmed_1P.append(trimmed)
                trimmed_2P.append(trimmed_match)
+               print(trimmed_1P)
+               print(trimmed_2P)
+               print(trimmed_files_PE)
+               continue
+        
 
-elif SE_trimmomatic:
-    for file in Fasta_files:
-        SE_trim_trimmomatic(file)
-        #creating a list of the trimmed sequences using trimmomatic in the SE mode
-        trimmed_files_SE=[]
-        for trimmed in trim_SE:
-            trimmed_files_SE.append(trimmed)
-            continue
-        #rUNNING A QUALITY CHECK OF THE TRIMOMATIC OUTPUTS  
-if PE_trimmomatic:
-    for file in trimmed_files_PE:
-        fastqc_after_trimmomatic(file)
-          
-elif SE_trimmomatic:
-    for file in trimmed_files_SE:
+    #Quality check on the trimmed sequences
+for file in trimmed_files_PE:
+    if fnmatch.fnmatch(file, "*.fastq.gz"):
         fastqc_after_trimmomatic(file)
         continue
-        
     
     
-
-# checks if the user requested for trimming and STAR mapping
-#if user requests for both, the input sequences for the mapping
-# are the trimmed sequences. If user requests only for mapping , input sequences
-#will be the raw fastq files
 if PE_trimmomatic and PE_STAR_mapping:
+    if not os.path.exists(PE_STAR_mapping[0]):
+        sys.exit(Fore.BLUE + "Your STAR index does not exist. Check the given path")
+
+    #To check if the primary assemble annotation file exists and is in gtf  format
+    gtf=os.path.exists(PE_STAR_mapping[1])
+    if not os.path.exists(PE_STAR_mapping[1]) and not gtf.endswith(".gtf"):
+        sys.exit(Fore.BLUE + "Your annotation file path does not exist \
+        or is not in the correct format (gtf)")
     #use the trimmed sequences as input directory
-    for file, file2 in zip(trimmed_1P, trimmed_2P):
-        PE_mapping_STAR(file, file2)
-else:
+    for x, y in zip(trimmed_1P, trimmed_2P):
+        Paired_end.STAR_mapping(x, y)
+else:        
     if PE_STAR_mapping and not PE_trimmomatic:
-        for file, file2 in zip(Forward_fasta_files, Reverse_fasta_files):
-            PE_mapping_STAR(file, file2)
+        for x, y in zip(Forward_fasta_files, Reverse_fasta_files):
+            Paired_end.STAR_mapping(x, y)
             continue
-
-# checks for single end trimming and mapping as above
-if SE_trimmomatic and SE_STAR_mapping:
-        for file in trimmed_files_SE:
-            SE_mapping_STAR(file)
-else:
-    if SE_STAR_mapping and not SE_trimmomatic:
-        for file in Fasta_files:
-            SE_mapping_STAR()
-
-
-
+      
+    
