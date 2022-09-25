@@ -60,7 +60,22 @@ Star_mapping.add_argument("--STAR_commands",dest = "STAR_commands", nargs = "?",
 parser.add_argument("-k", "--kallisto", dest="kallisto_quant", metavar = "", nargs=1, 
 help="requests mapping using kallisto. This generates transcripts counts. \
 The path to a kallisto index is needed")
+parser.add_argument("-e", "--splicing_efficiency", dest = "splicing_efficiency",
+metavar = "", nargs = 1, help = "requests using Splice_q to analyse the splicing \
+efficiency of the data. This requires one input; the path to the primary \
+assembly annotation file (in gtf format)")
+parser.add_argument("--Rsem", dest = "Rsem_calc_exp", metavar = "", nargs = 1,
+help = "requests the use of RSEM to quantify transcripts. This requires \
+    the path to the RSEM index")    
 
+parser.add_argument("--salmon", dest= "salmon_quant", metavar = "", nargs = 1,
+help = "requests the use of Salmon to quantify transcripts. Requires the path \
+    to a salmon index")
+    
+parser.add_argument("--stringtie", dest = "stringtie", metavar = "", nargs = 1,
+ help = "requests the use of Stringtie to quantify transcripts. It takes as input\
+     sorted bam files . It requires the path to a genome annotation file in gtf format")
+    
 args = parser.parse_args()
 if args.trim_commands:
     #config = configparser.ConfigParser()
@@ -79,7 +94,9 @@ if args.trim_commands:
 output_dir = args.output_dir
 input_dir = args.input_dir
 threads = args.threads
-
+splicing_efficiency = args.splicing_efficiency
+Rsem_calc_exp = args.Rsem_calc_exp
+stringtie = args.stringtie
 
 if args.mode == "PE":
     PE_trimmomatic=args.trimmomatic
@@ -87,6 +104,7 @@ if args.mode == "PE":
     PE_STAR_mapping = args.STAR_mapping
     STAR_commands = args.STAR_commands
     PE_kallisto_quant = args.kallisto_quant
+    PE_salmon_quant = args.salmon_quant
    
 else:
     if args.mode == "SE":
@@ -95,6 +113,7 @@ else:
         SE_STAR_mapping = args.STAR_mapping
         STAR_commands = args.STAR_commands
         SE_kallisto_quant = args.kallisto_quant
+        SE_salmon_quant = args.salmon_quant
         
 
 #Check if input and output directories exist
@@ -150,7 +169,12 @@ def fastqc(file):
     return(df)
     print("Quality check completed, check results in %s!" %fastq)
     
-   
+def samtools_indexing(file):
+        if fnmatch.fnmatch(file, "*sortedByCoord.out.bam"):
+            indexing = "samtools index {}".format (file)
+            df = subprocess.check_call(indexing, shell = True)
+            return(df)
+            
     
 def fastqc_after_trimmomatic(file):
     """
@@ -162,8 +186,52 @@ def fastqc_after_trimmomatic(file):
     command= "fastqc {} -o {} -t {}".format(file,fastqc_trimmed, threads)
     df = subprocess.check_call(command, shell=True)
     return(df)
+
+def Splice_q(file):
+    global Splice_file
+    Splice_file = os.path.join(output_dir, "SPLICE_q_outputs")
+    if not os.path.exists(Splice_file):
+        os.makedirs(Splice_file)
+    annotation = splicing_efficiency[0]
+    file_basename = os.path.basename(file)
+    indiv_folder = os.path.join(Splice_file, file_basename + ".tsv")
+    command = "SPLICE-q.py -b {} -g {} -p {} -o {}". format(file, 
+    annotation, threads, indiv_folder)
+    df = subprocess.check_call(command, shell = True)
+    return(df)
+
+def Rsem_quant(file):
+    """
+    This creates a file called RSEM_outputs and runs a commandline argument that \
+    quantifies the transcripts in a ".gzAligned.toTranscriptome.out.bam" file
+    """
+    global RSEM
+    RSEM = os.path.join(output_dir, "RSEM_outputs")
+    if not os.path.exists(RSEM):
+        os.makedirs(RSEM)
+    file_basename=os.path.basename(file)
+    indiv_folder = os.path.join(RSEM, file_basename)
+    annotation = Rsem_calc_exp[0]
+    command = "rsem-calculate-expression --paired-end --alignments --append-names \
+    -p {} {} {} {}".format(threads, file, annotation, indiv_folder)
+    df = subprocess.check_call(command, shell = True)
+    return(df)
     
 
+def Stringtie_quant(file):
+    global Stringtie_output
+    Stringtie_output = os.path.join(output_dir, "Stringtie_outputs")
+    if not os.path.exists(Stringtie_output):
+        os.makedirs(Stringtie_output)
+    path = "/datastore/Chidimma/tools/stringtie-2.2.1.Linux_x86_64/"
+    annotation =stringtie[0]
+    file_basename = os.path.basename(file)
+    indiv_folder_gtf = os.path.join(Stringtie_output, file_basename + ".gtf")
+    indiv_folder_tab = os.path.join(Stringtie_output, file_basename + ".tab")
+    command = "{}stringtie -o {} -A {} -G {} -B {}".format(path, indiv_folder_gtf,
+    indiv_folder_tab, annotation, file)
+    df = subprocess.check_call(command, shell = True)
+    return(df)
 
 
 #Creating a class object fro paired-end sequence analyses
@@ -194,7 +262,8 @@ class Paired_end:
         
         """
         This function creates a new folder in the user's output directory
-        named PE_STAR_output, then uses STAR to mapp and analyse the RNA-Seq data"""
+        named PE_STAR_output, then uses STAR to mapp and analyse the RNA-Seq data
+        . The function also uses samtools to index the "sortedByCoord.out.bam" files"""
         global PE_STAR
         PE_STAR = os.path.join(output_dir, "STAR_outputs_PE")
         if not os.path.exists(PE_STAR):
@@ -209,7 +278,7 @@ class Paired_end:
         --outFilterMultimapNmax 80 --outReadsUnmapped Fastx \
         --outMultimapperOrder Random --outSAMstrandField intronMotif \
         --outWigType wiggle --outFilterMismatchNoverLmax 0.1 --genomeDir {} \
-        --readFilesIn {} {} --outFileNamePrefix {}/{}".format(threads, annotation,\
+        --readFilesIn {} {} --twopassMode Basic --outFileNamePrefix {}/{}".format(threads, annotation,\
         genome_directory, file1, file2, PE_STAR, file_basename)
         df = subprocess.check_call(command, shell = True)
         return(df)
@@ -224,12 +293,36 @@ class Paired_end:
         indiv_folder = os.path.join(kallisto_outputs, file_basename + "_dir")
         if not os.path.exists(indiv_folder):
             os.makedirs(indiv_folder)
-        index =  PE_kallisto_quant
+        index =  PE_kallisto_quant[0]
         command = "kallisto quant -i {} -o {} {} {} -t {} --plaintext".format(index, 
         indiv_folder, file1, file2, threads)
         df= subprocess.check_call(command, shell =True)
+        os.chdir(indiv_folder)
+        os.renames("abundance.tsv", file_basename + ".tsv")
+       
+        return(df)
+        
+    def salmon(file1, file2):
+        global PE_Salmon_outputs
+        PE_Salmon_outputs = os.path.join(output_dir, "Salmon_outputs_PE")
+        if not os.path.exists(PE_Salmon_outputs):
+            os.makedirs(PE_Salmon_outputs)
+        path = "/datastore/Chidimma/salmon-1.9.0_linux_x86_64/bin/" 
+        index = PE_salmon_quant[0]
+        file_basename=os.path.basename(file1)
+        indiv_folder = os.path.join(PE_Salmon_outputs, file_basename + "_dir")
+        if not os.path.exists(indiv_folder):
+            os.makedirs(indiv_folder)
+        command = "{}salmon quant -i {} -l A --writeUnmappedNames -1 {} -2 {} -z \
+        -p {} -o {} ". format(path, index, file1, file2, threads, indiv_folder)
+        df = subprocess.check_call(command, shell = True)
+        os.chdir(indiv_folder)
+        os.renames("quant.sf", file_basename + ".sf")
+   
         return(df)
 
+
+#First step once a folder containing fasta files is given as input
 for file in Fasta_files:
     fastqc(file)
     continue
@@ -266,10 +359,11 @@ if PE_trimmomatic:
         
 
     #Quality check on the trimmed sequences
-for file in trimmed_files_PE:
-    if fnmatch.fnmatch(file, "*.fastq.gz"):
-        fastqc_after_trimmomatic(file)
-        continue
+if PE_trimmomatic:
+    for file in trimmed_files_PE:
+        if fnmatch.fnmatch(file, "*.fastq.gz"):
+            fastqc_after_trimmomatic(file)
+            continue
     
     
 if PE_trimmomatic and PE_STAR_mapping:
@@ -289,5 +383,82 @@ else:
         for x, y in zip(Forward_fasta_files, Reverse_fasta_files):
             Paired_end.STAR_mapping(x, y)
             continue
+            
+            #Creating a list for the STAR outputs
+STAR_sortedByCoord = []
+STAR_AlignedToTranscriptome= []
+for bamfiles in glob.glob(os.path.join(PE_STAR, "*sortedByCoord.out.bam")):
+    STAR_sortedByCoord.append(bamfiles)
+           
+for bamfile in glob.glob(os.path.join(PE_STAR, "*Aligned.toTranscriptome.out.bam")):
+    STAR_AlignedToTranscriptome.append(bamfile)
+    continue
+print(STAR_sortedByCoord)
+print(STAR_AlignedToTranscriptome)
+        
+#Indexing the "sortedByCoord .bam" files     
+for file in STAR_sortedByCoord:
+   samtools_indexing(file)
+   continue
+
+
+
+if PE_kallisto_quant and PE_trimmomatic:
+    if not os.path.exists(PE_kallisto_quant[0]):
+        sys.exit(Fore.RED + "Your kallisto index does not exist. Check the given path")
+               
+    for x, y in zip(trimmed_1P, trimmed_2P):
+        Paired_end.kallisto(x, y)
+        
+        #Make a list containing the tsv files from kallisto
       
+        
+        
+else:
+    if PE_kallisto_quant and not PE_trimmomatic:
+        for x, y in zip(Forward_fasta_files, Reverse_fasta_files):
+            Paired_end.kallisto(x, y)
+            continue
+
+#kallisto_PE_outputs = []
+#or dirs, files in os.walk(kallisto_outputs):
+   #   for file in files:
+  #        if file.endswith(".tsv"):
+  #            kallisto_PE_outputs.append(file)
+#print(kallisto_PE_outputs)
+     
+
+            
+        
+#Run SPLICE_q if requested
+if splicing_efficiency and PE_STAR_mapping:
+    for file in STAR_sortedByCoord:
+        Splice_q(file)
+        
+else:
+    if splicing_efficiency and  not PE_STAR_mapping:
+        sys.exit(Fore.BLUE + "Splicing efficiency needs bam files as input. Please perform STAR mapping")
+
+
+#quantify using RSEM if demanded.
+if Rsem_calc_exp:
+    for file in STAR_AlignedToTranscriptome:
+         Rsem_quant(file)
+         continue
+     
+if PE_salmon_quant:
+    if not os.path.exists(PE_salmon_quant[0]):
+        sys.exit(Fore.RED + "Your salmon index does not exist. Check the given path")
+               
+    for x, y in zip(trimmed_1P, trimmed_2P):
+        Paired_end.salmon(x, y)
+        continue
+
+
+#quantify using Stringtie
+if stringtie:
+    for file in STAR_sortedByCoord:
+        Stringtie_quant(file)
+        continue
+        
     
