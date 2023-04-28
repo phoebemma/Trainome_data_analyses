@@ -1,2 +1,2 @@
-# Trainome_RNA_pipeline
-A pipeline for RNA-Seq data analyses
+# Trainome_data_pipeline
+Scripts (shell and python) used in RNA sequence data analyses.  
